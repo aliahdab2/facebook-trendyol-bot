@@ -25,95 +25,111 @@ def publisher(mock_db):
     return FacebookPublisher(mock_db)
 
 
-@pytest.mark.asyncio
-async def test_check_posting_limits_within_limits(publisher):
+def test_check_post_rate_limit_within_limits(publisher):
     """Test posting limits when within allowed range"""
     publisher.posts_this_hour = 3
-    publisher.posts_today = 4
     
-    result = await publisher._check_posting_limits()
+    result = publisher._check_post_rate_limit()
     
     assert result is True
 
 
-@pytest.mark.asyncio
-async def test_check_posting_limits_hourly_exceeded(publisher):
+def test_check_post_rate_limit_hourly_exceeded(publisher):
     """Test posting limits when hourly limit exceeded"""
     publisher.posts_this_hour = 5
-    publisher.posts_today = 4
     
-    result = await publisher._check_posting_limits()
-    
-    assert result is False
-
-
-@pytest.mark.asyncio
-async def test_check_posting_limits_daily_exceeded(publisher):
-    """Test posting limits when daily limit exceeded"""
-    publisher.posts_this_hour = 3
-    publisher.posts_today = 6
-    
-    result = await publisher._check_posting_limits()
+    result = publisher._check_post_rate_limit()
     
     assert result is False
 
 
 @pytest.mark.asyncio
-@patch('aiohttp.ClientSession.post')
-async def test_publish_to_page_success(mock_post, publisher, mock_db):
+async def test_wait_random_delay(publisher):
+    """Test random delay calculation"""
+    import time
+    start = time.time()
+    
+    # Use minimal delay for testing
+    with patch('asyncio.sleep', new_callable=AsyncMock) as mock_sleep:
+        await publisher._wait_random_delay(min_minutes=1, max_minutes=2)
+        
+        # Verify sleep was called with time in seconds (60-120)
+        mock_sleep.assert_called_once()
+        delay_seconds = mock_sleep.call_args[0][0]
+        assert 60 <= delay_seconds <= 120
+
+
+@pytest.mark.asyncio
+async def test_publish_to_page_success(publisher, mock_db):
     """Test successful publishing to page"""
-    mock_response = AsyncMock()
+    mock_response = Mock()
     mock_response.status = 200
     mock_response.json = AsyncMock(return_value={'id': 'page_post_123'})
-    mock_post.return_value.__aenter__.return_value = mock_response
     
-    publisher.session = Mock()
-    publisher.session.post = mock_post
+    # Create proper async context manager
+    mock_context = AsyncMock()
+    mock_context.__aenter__.return_value = mock_response
+    mock_context.__aexit__.return_value = None
     
-    content = "Test post content"
+    mock_session = Mock()
+    mock_session.post = Mock(return_value=mock_context)
+    
+    publisher.session = mock_session
+    publisher.posts_this_hour = 0
+    
+    page_id = "test_page_123"
+    message = "Test post content"
     images = ["https://test.com/image.jpg"]
     
-    result = await publisher._publish_to_page('test_post_123', content, images)
+    result = await publisher._publish_to_page(page_id, message, images)
     
-    assert result is True
-    assert mock_db.save_published_post.called
+    assert result == 'page_post_123'
+    assert publisher.posts_this_hour == 1
 
 
 @pytest.mark.asyncio
-async def test_calculate_delay_after_original(publisher):
-    """Test delay calculation after original post"""
-    original_time = datetime.now() - timedelta(minutes=10)
-    
-    delay = await publisher._calculate_delay_after_original(original_time)
-    
-    # Should wait at least 30 minutes total, so 20 more minutes
-    assert delay >= 20 * 60
-    assert delay <= 120 * 60
-
-
-@pytest.mark.asyncio
-async def test_calculate_next_post_interval(publisher):
-    """Test interval calculation between posts"""
-    interval = await publisher._calculate_next_post_interval()
-    
-    # Should be between 2-5 hours in seconds
-    assert interval >= 2 * 3600
-    assert interval <= 5 * 3600
-
-
-def test_create_post_content(publisher):
-    """Test post content creation"""
+async def test_publish_post_structure(publisher):
+    """Test publish_post method structure"""
     processed_data = {
-        'modified_text': 'Check out this amazing product!',
-        'promotional_text': 'Shop on Trendyol for best prices',
-        'hashtags': '#deals #shopping #trendyol',
-        'source_attribution': 'Source: Test Store | https://test.com',
-        'images': '["https://test.com/img.jpg"]'
+        'post_id': 'test_123',
+        'final_text': 'Test content',
+        'images': ['https://test.com/img.jpg']
     }
     
-    content = publisher._create_post_content(processed_data)
+    with patch.object(publisher, '_wait_random_delay', new_callable=AsyncMock):
+        with patch.object(publisher, '_publish_to_page', new_callable=AsyncMock, return_value='page_123'):
+            with patch.object(publisher, '_publish_to_group', new_callable=AsyncMock, return_value='group_123'):
+                with patch('asyncio.sleep', new_callable=AsyncMock):
+                    result = await publisher.publish_post(processed_data, wait_delay=False)
+                    
+                    assert result is not None
+                    assert 'success' in result
+                    assert result.get('page_post_id') or result.get('group_post_id')
+
+
+@pytest.mark.asyncio
+async def test_publish_to_group_success(publisher):
+    """Test successful publishing to group"""
+    mock_response = Mock()
+    mock_response.status = 200
+    mock_response.json = AsyncMock(return_value={'id': 'group_post_456'})
     
-    assert 'amazing product' in content
-    assert 'Trendyol' in content
-    assert '#deals' in content
-    assert 'Source: Test Store' in content
+    # Create proper async context manager
+    mock_context = AsyncMock()
+    mock_context.__aenter__.return_value = mock_response
+    mock_context.__aexit__.return_value = None
+    
+    mock_session = Mock()
+    mock_session.post = Mock(return_value=mock_context)
+    
+    publisher.session = mock_session
+    publisher.posts_this_hour = 0
+    
+    group_id = "test_group_456"
+    message = "Test group post"
+    images = []
+    
+    result = await publisher._publish_to_group(group_id, message, images)
+    
+    assert result == 'group_post_456'
+    assert publisher.posts_this_hour == 1
