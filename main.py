@@ -1,159 +1,238 @@
 """
-Main ApplicationFacebook Trendyol Bot - Automated Affiliate Marketing System
-بوت فيسبوك تريندول - نظام تسويق بالعمولة آلي
+Facebook Trendyol Bot - Main Entry Point
 """
 
 import asyncio
 import sys
-from pathlib import Path
-
-# Add project root to pathsys.path.insert(0, str(Path(__file__).parent))
-
+from datetime import datetime
 from config import settings
 from utils.logger import logger
 from src.database import Database
 from src.facebook_collector import run_collection_cycle
 from src.content_analyzer import run_analysis_cycle
-from src.trendyol_matcher import run_matching_cycle
-from src.content_processor import run_processing_cycle
-from src.publisher import run_publishing_cycle
+from src.trendyol_matcher import TrendyolMatcher
+from src.content_processor import ContentProcessor
+from src.publisher import FacebookPublisher
 from src.scheduler import SmartScheduler
 
 
+def print_banner():
+    """Print application banner"""
+    banner = """
+╔══════════════════════════════════════════════════════════╗
+║                                                          ║
+║        🤖 Facebook Trendyol Affiliate Bot 🤖             ║
+║                                                          ║
+║  Automated affiliate marketing system for Trendyol      ║
+║  Monitors competitor stores → Analyzes with AI →        ║
+║  Matches products → Publishes with attribution          ║
+║                                                          ║
+╚══════════════════════════════════════════════════════════╝
+"""
+    print(banner)
+    logger.info("🚀 Bot starting up...")
+
+
 async def initialize_system() -> Database:
- """
- Initialize the bot system
- تهيئة نظام البوت
-
- Returns:
- Initialized database"""
- logger.info("=" * 80)
- logger.info("🚀 FACEBOOK TRENDYOL BOT STARTING")
- logger.info("=" * 80)
-
- # Validate settingstry:
- settings.validate_settings()
- logger.info("✅ Settings validated")
- except ValueError as e:
- logger.error(f"❌ Configuration error: {e}")
- sys.exit(1)
-
- # Initialize databasedatabase = Database(settings.DATABASE_PATH)
- await database.connect()
- logger.info("✅ Database initialized")
-
- # Log configurationlogger.info("📋 Configuration:")
- logger.info(f" Operating hours: {settings.COLLECTION_START_HOUR}:00 - {settings.COLLECTION_END_HOUR}:00")
- logger.info(f" Collection interval: {settings.COLLECTION_INTERVAL_HOURS} hours")
- logger.info(f" Max posts/day: {settings.MAX_POSTS_PER_DAY}")
- logger.info(f" Source pages: {len(settings.SOURCE_PAGES)}")
- logger.info("=" * 80)
-
- return database
+    """Initialize database and systems"""
+    logger.info("⚙️ Initializing system...")
+    
+    # Validate settings
+    if not settings.validate():
+        logger.error("❌ Configuration invalid. Please check .env file")
+        sys.exit(1)
+    
+    # Initialize database
+    db = Database(settings.DATABASE_PATH)
+    await db.initialize()
+    
+    logger.info("✅ System initialized")
+    return db
 
 
-async def run_manual_cycle(database: Database):
- """
- Run a single manual cycle (for testing)
- تشغيل دورة يدوية واحدة (للاختبار)
+async def run_manual_cycle():
+    """Run a single cycle manually"""
+    print_banner()
+    
+    db = await initialize_system()
+    
+    try:
+        logger.info("🔄 Running manual cycle...")
+        
+        # Step 1: Collect
+        logger.info("📥 Step 1/5: Collecting posts from competitor pages...")
+        collected = await run_collection_cycle(db)
+        logger.info(f"✅ Collected {collected} posts")
+        
+        if collected == 0:
+            logger.info("ℹ️ No new posts to process. Exiting.")
+            return
+        
+        # Step 2: Analyze
+        logger.info("🧠 Step 2/5: Analyzing content with AI...")
+        await run_analysis_cycle(db)
+        
+        # Step 3: Match
+        logger.info("🔗 Step 3/5: Matching with Trendyol links...")
+        matcher = TrendyolMatcher()
+        await matcher.load_trendyol_links()
+        
+        unprocessed = await db.get_unprocessed_posts()
+        for post_data in unprocessed:
+            post_id = post_data['post_id']
+            
+            # Get analysis
+            analysis = post_data.get('analysis')
+            if not analysis:
+                continue
+            
+            # Find match
+            match = await matcher.find_best_match(analysis)
+            if match:
+                await db.save_trendyol_match(
+                    post_id=post_id,
+                    trendyol_link=match['link'],
+                    match_score=match['score']
+                )
+        
+        # Step 4: Process
+        logger.info("✏️ Step 4/5: Processing content...")
+        processor = ContentProcessor()
+        
+        matched_posts = await db.get_unprocessed_posts()
+        for post_data in matched_posts:
+            if not post_data.get('trendyol_link'):
+                continue
+            
+            # Get source attribution
+            source_page = post_data['source_page']
+            source_website = post_data['source_website']
+            source_attribution = f"Source: {source_page} | {source_website}"
+            
+            # Process
+            processed = await processor.process_post(
+                post_data,
+                post_data['analysis'],
+                post_data['trendyol_link'],
+                source_attribution
+            )
+            
+            if processed:
+                await db.save_processed_post(**processed)
+        
+        # Step 5: Publish
+        logger.info("📤 Step 5/5: Publishing to Facebook...")
+        publisher = FacebookPublisher(db)
+        
+        processed_posts = await db.get_recent_published_posts(limit=10)
+        for processed_data in processed_posts:
+            result = await publisher.publish_post(processed_data, wait_delay=False)
+            logger.info(f"✅ Published: {result}")
+        
+        logger.info("✅ Manual cycle completed successfully!")
+        
+        # Show stats
+        stats = await db.get_daily_stats()
+        logger.info(f"""
+📊 Daily Statistics:
+   - Collected: {stats.get('collected', 0)}
+   - Analyzed: {stats.get('analyzed', 0)}
+   - Matched: {stats.get('matched', 0)}
+   - Processed: {stats.get('processed', 0)}
+   - Published: {stats.get('published', 0)}
+""")
+        
+    except Exception as e:
+        logger.error(f"❌ Manual cycle failed: {e}")
+    finally:
+        await db.close()
 
- Args:
- database: Database instance"""
- logger.info("🔧 MANUAL CYCLE MODE")
- logger.info("Running one complete cycle......")
 
- scheduler = SmartScheduler(database)
+async def run_automatic_mode():
+    """Run bot in automatic scheduled mode"""
+    print_banner()
+    
+    db = await initialize_system()
+    scheduler = SmartScheduler()
+    
+    try:
+        # Define cycle functions
+        async def collect():
+            return await run_collection_cycle(db)
+        
+        async def analyze():
+            return await run_analysis_cycle(db)
+        
+        async def match():
+            matcher = TrendyolMatcher()
+            await matcher.load_trendyol_links()
+            unprocessed = await db.get_unprocessed_posts()
+            
+            for post_data in unprocessed:
+                if not post_data.get('analysis'):
+                    continue
+                
+                match_result = await matcher.find_best_match(post_data['analysis'])
+                if match_result:
+                    await db.save_trendyol_match(
+                        post_id=post_data['post_id'],
+                        trendyol_link=match_result['link'],
+                        match_score=match_result['score']
+                    )
+        
+        async def process():
+            processor = ContentProcessor()
+            matched_posts = await db.get_unprocessed_posts()
+            
+            for post_data in matched_posts:
+                if not post_data.get('trendyol_link'):
+                    continue
+                
+                source_attribution = f"Source: {post_data['source_page']} | {post_data['source_website']}"
+                
+                processed = await processor.process_post(
+                    post_data,
+                    post_data['analysis'],
+                    post_data['trendyol_link'],
+                    source_attribution
+                )
+                
+                if processed:
+                    await db.save_processed_post(**processed)
+        
+        async def publish():
+            publisher = FacebookPublisher(db)
+            processed_posts = await db.get_recent_published_posts(limit=5)
+            
+            for processed_data in processed_posts:
+                await publisher.publish_post(processed_data, wait_delay=True)
+        
+        # Run scheduled
+        logger.info("🚀 Starting automatic mode...")
+        await scheduler.run_scheduled(
+            collection_func=collect,
+            analysis_func=analyze,
+            matching_func=match,
+            processing_func=process,
+            publishing_func=publish,
+            interval_hours=2
+        )
+        
+    except KeyboardInterrupt:
+        logger.info("🛑 Stopping bot...")
+    except Exception as e:
+        logger.error(f"❌ Automatic mode failed: {e}")
+    finally:
+        await db.close()
 
- await scheduler.run_cycle(
- run_collection_cycle,
- run_analysis_cycle,
- run_matching_cycle,
- run_processing_cycle,
- run_publishing_cycle
- )
 
- logger.info("✅ Manual cycle complete")
-
-
-async def run_automatic_mode(database: Database):
- """
- Run bot in automatic continuous mode
- تشغيل البوت في الوضع التلقائي المستمر
-
- Args:
- database: Database instance"""
- logger.info("🤖 AUTOMATIC MODE")
- logger.info("Bot will run continuously... Press Ctrl+C to stop... اضغط Ctrl+C للإيقاف")
-
- scheduler = SmartScheduler(database)
-
- try:
- await scheduler.start(
- run_collection_cycle,
- run_analysis_cycle,
- run_matching_cycle,
- run_processing_cycle,
- run_publishing_cycle
- )
- except KeyboardInterrupt:
- logger.info("⏹️ Shutdown requested")
- scheduler.stop()
-
-
-async def main():
- """
- Main entry point
- نقطة الدخول الرئيسية
- """
- database = None
-
- try:
- # Initialize systemdatabase = await initialize_system()
-
- # Check command line argumentsmode = sys.argv[1] if len(sys.argv) > 1 else "auto"
-
- if mode == "manual":
- # Run single cycleawait run_manual_cycle(database)
- else:
- # Run automatic continuous modeawait run_automatic_mode(database)
-
- except Exception as e:
- logger.error(f"❌ Fatal error: {e}")
- sys.exit(1)
-
- finally:
- # Cleanupif database:
- await database.disconnect()
- logger.info("✅ Database disconnected")
-
- logger.info("=" * 80)
- logger.info("👋 BOT STOPPED")
- logger.info("=" * 80)
+def main():
+    """Main entry point"""
+    if len(sys.argv) > 1 and sys.argv[1] == "--manual":
+        asyncio.run(run_manual_cycle())
+    else:
+        asyncio.run(run_automatic_mode())
 
 
 if __name__ == "__main__":
- """
- Entry point when script is run directly
- نقطة الدخول عند تشغيل السكريبت مباشرة
-
- Usage:
- python main.py # Automatic modepython main.py manual # Manual single cycle"""
-
- # Print bannerprint("=" * 80)
- print(" ______ ____ ____ _ __ ____ ____ ______")
- print("_____ \\ / __ \\|/ /_ \\ / __ \\____|")
- print("|__|_)' /|_)|__ ")
- print("___ <<_ <__")
- print("|_)|__. \\|_)|__")
- print(" |_|____/ \\____/|_|\\_\\ |____/ \\____/|_")
- print()
- print(" Facebook Trendyol Bot")
- print(" Automated Affiliate Marketing System")
- print(" نظام تسويق بالعمولة آلي")
- print("=" * 80)
- print()
-
- # Run main async functiontry:
- asyncio.run(main())
- except KeyboardInterrupt:
- print("\n👋 Goodbye!!")
+    main()

@@ -1,327 +1,203 @@
 """
-Content ProcessorModifies original content and generates promotional texts
-يعدل المحتوى الأصلي ويولد النصوص الترويجية
+Content Processor - Modifies content 30-50% and generates promotional text
 """
 
-import openai
-import random
+import json
 from typing import Dict, List, Optional
+from openai import OpenAI
 from config import settings
-from utils.logger import logger, log_api_call
-from src.database import Database
+from utils.logger import logger
 
 
 class ContentProcessor:
- """
- Processes and modifies post content with AI
- يعالج ويعدل محتوى المنشور بالذكاء الاصطناعي
- """
+    """Processes and modifies post content using AI"""
 
- def __init__(self, database: Database):
- """
- Initialize content processor
- تهيئة معالج المحتوى
+    def __init__(self):
+        """Initialize content processor"""
+        self.client = OpenAI(api_key=settings.OPENAI_API_KEY)
+        self.model = "gpt-3.5-turbo"
 
- Args:
- database: Database instance"""
- self.database = database
- openai.api_key = settings.OPENAI_API_KEY
- self.model = settings.OPENAI_MODEL
-
- def _create_modification_prompt(self, original_text: str, modification_level: int = 40) -> str:
- """
- Create prompt for text modification
- إنشاء طلب لتعديل النص
-
- Args:
- original_text: Original post textmodification_level: Modification percentageReturns:
- GPT promptGPT
- """
- return f"""أنت كاتب محتوى محترف. قم بإعادة صياغة النص التالي بنسبة تعديل {modification_level}%.
+    def _create_modification_prompt(self, original_text: str, product_name: str) -> str:
+        """Create prompt for content modification"""
+        prompt = f"""أنت خبير في إعادة صياغة المحتوى التسويقي.
 
 النص الأصلي:
 {original_text}
 
-متطلبات إعادة الصياغة:
-1. احتفظ بجميع المعلومات المهمة (اسم المنتج، السعر، التخفيض)
-2. غيّر الإيموجي إلى إيموجي مختلفة ومناسبة
-3. أعد ترتيب الجمل
-4. استخدم مرادفات ومصطلحات مختلفة
-5. غيّر أسلوب الكتابة قليلاً (من رسمي لودود أو العكس)
-6. احذف أي أرقام هواتف أو عناوين محددة
-
-ملاحظة: لا تضف روابط أو معلومات جديدة. فقط أعد صياغة النص الموجود.
-
-النص المعدل:"""
-
- def _create_promotional_prompt(self, product_name: str, category: str, trendyol_link: str) -> str:
- """
- Create prompt for Trendyol promotional text
- إنشاء طلب للنص الترويجي لتريندول
-
- Args:
- product_name: Product namecategory: Product categorytrendyol_link: Trendyol affiliate linkReturns:
- GPT promptGPT
- """
- templates = [
- "مقارنة أسعار تريندول",
- "عروض تريندول الحصرية",
- "توصيل مجاني من تريندول",
- "تسوق أونلاين من تريندول"
- ]
-
- template_choice = random.choice(templates)
-
- return f"""اكتب نص ترويجي قصير (2-3 أسطر فقط) لتشجيع الناس على مقارنة الأسعار في تريندول.
-
 المنتج: {product_name}
-الفئة: {category}
-الرابط: {trendyol_link}
-الأسلوب: {template_choice}
 
-المتطلبات:
-1. نص قصير وجذاب
-2. يشجع على المقارنة (ليس إلزام شراء)
-3. يذكر ميزة (مثل: توصيل مجاني، أسعار منافسة، تشكيلة واسعة)
-4. يحتوي إيموجي واحد أو اثنين مناسبين
-5. لا تذكر أسعار محددة
+قم بإعادة كتابة النص بحيث:
+1. تغيير 30-50% من الكلمات باستخدام مرادفات
+2. إعادة ترتيب الجمل
+3. تغيير الإيموجي المستخدمة
+4. الحفاظ على المعنى الأساسي
+5. النص يجب أن يبدو طبيعياً ومختلفاً عن الأصل
 
-النص الترويجي:"""
+أرجع النص المعدل فقط بدون أي تعليقات."""
 
- def _generate_hashtags(self, source: str, category: str, product_name: str) -> str:
- """
- Generate smart hashtags
- توليد هاشتاقات ذكية
+        return prompt
 
- Args:
- source: Source store namecategory: Product categoryproduct_name: Product nameReturns:
- Hashtags string"""
- hashtags = []
+    def _create_promotional_prompt(self, product_name: str, category: str) -> str:
+        """Create prompt for Trendyol promotional text"""
+        prompt = f"""أنشئ نصاً ترويجياً قصيراً (2-3 جمل) لمنتج "{product_name}" من فئة "{category}".
 
- # Source store hashtagssource_tags = {
- "Al Othaim": ["#العثيم", "#عروض_العثيم"],
- "Al Saif": ["#السيف_غاليري", "#السيف"],
- "Safaco": ["#صافكو", "#Safaco"],
- "Panda": ["#بنده", "#Panda"]
- }
+النص يجب أن:
+1. يكون جذاباً ومختصراً
+2. يشجع على الشراء من تريندول
+3. يذكر ميزة أو اثنتين للمنتج
+4. يحتوي على دعوة لاتخاذ إجراء
+5. يستخدم إيموجي مناسبة
 
- if source in source_tags:
- hashtags.extend(source_tags[source])
+مثال: "🛍️ اطلب الآن من تريندول واحصل على أفضل الأسعار! توصيل سريع وضمان الجودة ✨"
 
- # Trendyol hashtagshashtags.extend(["#تريندول", "#Trendyol"])
+أرجع النص الترويجي فقط بدون تعليقات."""
 
- # Category hashtagscategory_tags = {
- "إلكترونيات": ["#إلكترونيات", "#تقنية"],
- "ملابس": ["#ملابس", "#أزياء"],
- "منزل": ["#منزل", "#ديكور"],
- "طعام": ["#طعام", "#مأكولات"],
- "أجهزة": ["#أجهزة", "#إلكترونيات"]
- }
+        return prompt
 
- for key, tags in category_tags.items():
- if key in category:
- hashtags.extend(tags[:1]) # Add one category tag
- break
+    def _generate_hashtags(self, product_name: str, category: str, source_page: str) -> List[str]:
+        """Generate relevant hashtags"""
+        hashtags = []
 
- # General hashtagsgeneral = ["#عروض", "#تخفيضات", "#السعودية", "#توفير", "#تسوق_اونلاين"]
- hashtags.extend(random.sample(general, 2))
+        # Source page hashtag
+        store_hashtags = {
+            "Al Othaim": ["#العثيم", "#AlOthaimMarkets"],
+            "Al Saif": ["#السيف_غاليري", "#AlSaifGallery"],
+            "Safaco": ["#صافكو", "#Safaco"],
+            "Panda": ["#بنده", "#PandaStores"]
+        }
+        hashtags.extend(store_hashtags.get(source_page, []))
 
- # Limit to configured rangecount = random.randint(settings.MIN_HASHTAGS, settings.MAX_HASHTAGS)
- selected = hashtags[:count]
+        # Trendyol hashtags
+        hashtags.extend(["#تريندول", "#Trendyol", "#تسوق_اونلاين"])
 
- return " ".join(selected)
+        # Category hashtags
+        category_hashtags = {
+            "Electronics": ["#الكترونيات", "#Electronics"],
+            "Fashion": ["#موضة", "#Fashion"],
+            "Home": ["#منزل", "#HomeDecor"],
+            "Beauty": ["#تجميل", "#Beauty"],
+            "Kitchen": ["#مطبخ", "#Kitchen"],
+            "Sports": ["#رياضة", "#Sports"]
+        }
+        hashtags.extend(category_hashtags.get(category, []))
 
- async def process_post(
- self,
- post_id: str,
- original_text: str,
- source_page: str,
- source_website: str,
- analysis: Dict,
- trendyol_match: Dict
- ) -> Optional[Dict]:
- """
- Process a complete post with modifications and promotional content
- معالجة منشور كامل مع التعديلات والمحتوى الترويجي
+        # Generic shopping hashtags
+        hashtags.extend(["#عروض", "#تخفيضات", "#تسوق"])
 
- Args:
- post_id: Post IDoriginal_text: Original post textsource_page: Source page namesource_website: Source website URLanalysis: Post analysis resultstrendyol_match: Trendyol match dataReturns:
- Processed post data"""
- logger.info(f"⚙️ Processing post: {post_id}")
+        return hashtags[:12]  # Maximum 12 hashtags
 
- try:
- # ================================================================
- # STEP 1: Modify original text# ================================================================
+    async def modify_content(self, original_text: str, product_name: str) -> Optional[str]:
+        """Modify original content 30-50%"""
+        try:
+            prompt = self._create_modification_prompt(original_text, product_name)
 
- modification_level = random.randint(
- settings.MIN_MODIFICATION_PERCENT,
- settings.MAX_MODIFICATION_PERCENT
- )
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": "You are an expert content writer."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.7,
+                max_tokens=500
+            )
 
- modification_prompt = self._create_modification_prompt(original_text, modification_level)
+            modified_text = response.choices[0].message.content.strip()
+            logger.info(f"✅ Content modified for: {product_name}")
+            return modified_text
 
- modification_response = openai.ChatCompletion.create(
- model=self.model,
- messages=[
- {"role": "system", "content": "أنت كاتب محتوى محترف متخصص في إعادة الصياغة."},
- {"role": "user", "content": modification_prompt}
- ],
- temperature=0.7,
- max_tokens=300
- )
+        except Exception as e:
+            logger.error(f"❌ Content modification failed: {e}")
+            return None
 
- modified_text = modification_response.choices[0].message.content.strip()
- log_api_call("OpenAI", "text_modification", 200)
+    async def generate_promotional_text(self, product_name: str, category: str) -> Optional[str]:
+        """Generate Trendyol promotional text"""
+        try:
+            prompt = self._create_promotional_prompt(product_name, category)
 
- # ================================================================
- # STEP 2: Generate promotional text# ================================================================
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": "You are a marketing expert."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.8,
+                max_tokens=200
+            )
 
- promotional_prompt = self._create_promotional_prompt(
- analysis.get('product_name', ''),
- analysis.get('category', ''),
- trendyol_match.get('trendyol_link', '')
- )
+            promo_text = response.choices[0].message.content.strip()
+            logger.info(f"✅ Promotional text generated for: {product_name}")
+            return promo_text
 
- promo_response = openai.ChatCompletion.create(
- model=self.model,
- messages=[
- {"role": "system", "content": "أنت كاتب محتوى تسويقي محترف."},
- {"role": "user", "content": promotional_prompt}
- ],
- temperature=0.8,
- max_tokens=150
- )
+        except Exception as e:
+            logger.error(f"❌ Promotional text generation failed: {e}")
+            return None
 
- promotional_text = promo_response.choices[0].message.content.strip()
- log_api_call("OpenAI", "promotional_generation", 200)
+    async def process_post(
+        self,
+        post_data: Dict,
+        analysis: Dict,
+        trendyol_link: str,
+        source_attribution: str
+    ) -> Optional[Dict]:
+        """Process complete post with all modifications"""
+        try:
+            product_name = analysis.get('product_name', 'Product')
+            category = analysis.get('category', 'General')
 
- # ================================================================
- # STEP 3: Generate hashtags# ================================================================
+            # Modify original content
+            modified_text = await self.modify_content(post_data['text'], product_name)
+            if not modified_text:
+                return None
 
- hashtags = self._generate_hashtags(
- source_page,
- analysis.get('category', ''),
- analysis.get('product_name', '')
- )
+            # Generate promotional text
+            promo_text = await self.generate_promotional_text(product_name, category)
+            if not promo_text:
+                return None
 
- # ================================================================
- # STEP 4: Create source attribution# ================================================================
+            # Generate hashtags
+            hashtags = self._generate_hashtags(product_name, category, post_data['source_page'])
 
- source_attribution = f"📍 المصدر: {source_page}"
- if source_website:
- source_attribution += f"{source_website}"
+            # Combine everything
+            final_text = f"""{modified_text}
 
- # ================================================================
- # STEP 5: Combine all parts# ================================================================
+━━━━━━━━━━━━━━━━
 
- final_content = f"""{modified_text}
+{promo_text}
 
----
-{promotional_text}
-🔗 {trendyol_match.get('trendyol_link', '')}
+🔗 رابط المنتج في تريندول:
+{trendyol_link}
 
-{source_attribution}
+━━━━━━━━━━━━━━━━
 
-{hashtags}"""
+📌 {source_attribution}
 
- # ================================================================
- # STEP 6: Save to database# ================================================================
+{' '.join(hashtags)}"""
 
- await self.database.connection.execute("""
- INSERT OR REPLACE INTO processed_posts
- (post_id, modified_text, promotional_text, hashtags, source_attribution, final_content)
- VALUES (?, ?, ?, ?, ?, ?)
- """, (
- post_id,
- modified_text,
- promotional_text,
- hashtags,
- source_attribution,
- final_content
- ))
- await self.database.connection.commit()
+            processed_data = {
+                'post_id': post_data['post_id'],
+                'modified_text': modified_text,
+                'promotional_text': promo_text,
+                'hashtags': hashtags,
+                'final_text': final_text,
+                'trendyol_link': trendyol_link,
+                'source_attribution': source_attribution,
+                'images': post_data.get('images', [])
+            }
 
- logger.info(f"✅ Processed successfully: {post_id}")
+            logger.info(f"✅ Post processed: {post_data['post_id']}")
+            return processed_data
 
- return {
- 'post_id': post_id,
- 'modified_text': modified_text,
- 'promotional_text': promotional_text,
- 'hashtags': hashtags,
- 'source_attribution': source_attribution,
- 'final_content': final_content,
- 'trendyol_link': trendyol_match.get('trendyol_link', '')
- }
-
- except Exception as e:
- logger.error(f"❌ Processing failed: {e}")
- await self.database.log_warning(
- "processing_error",
- f"Failed to process post {post_id}: {str(e)}",
- "ContentProcessor"
- )
- return None
+        except Exception as e:
+            logger.error(f"❌ Post processing failed: {e}")
+            return None
 
 
-# ============================================================================
-# STANDALONE PROCESSING FUNCTION# ============================================================================
-
-async def run_processing_cycle(database: Database) -> int:
- """
- Process posts that have been analyzed and matched
- معالجة المنشورات التي تم تحليلها ومطابقتها
-
- Args:
- database: Database instanceReturns:
- Number of posts processed"""
- processor = ContentProcessor(database)
-
- # Get posts ready for processingasync with database.connection.execute("""
- SELECT
- cp.post_id, cp.original_text, cp.source_page, cp.source_website,
- ap.product_name, ap.category, ap.keywords,
- tm.trendyol_link, tm.confidence_score
- FROM collected_posts cp
- JOIN analyzed_posts ap ON cp.post_id = ap.post_id
- JOIN trendyol_matches tm ON cp.post_id = tm.post_id
- LEFT JOIN processed_posts pp ON cp.post_id = pp.post_id
- WHERE pp.post_id IS NULL AND ap.is_suitable = 1
- LIMIT 20
- """) as cursor:
- rows = await cursor.fetchall()
- posts = [dict(row) for row in rows]
-
- if not posts:
- logger.info("ℹ️ No posts to process")
- return 0
-
- logger.info(f"⚙️ Processing {len(posts)} posts{len(posts)} منشور")
-
- processed_count = 0
-
- for post in posts:
- analysis = {
- 'product_name': post['product_name'],
- 'category': post['category'],
- 'keywords': post['keywords']
- }
-
- trendyol_match = {
- 'trendyol_link': post['trendyol_link'],
- 'confidence_score': post['confidence_score']
- }
-
- result = await processor.process_post(
- post['post_id'],
- post['original_text'],
- post['source_page'],
- post['source_website'],
- analysis,
- trendyol_match
- )
-
- if result:
- processed_count += 1
-
- logger.info(f"✅ Processing complete: {processed_count}/{len(posts)}")
- return processed_count
+async def process_single_post(
+    post_data: Dict,
+    analysis: Dict,
+    trendyol_link: str,
+    source_attribution: str
+) -> Optional[Dict]:
+    """Process a single post"""
+    processor = ContentProcessor()
+    return await processor.process_post(post_data, analysis, trendyol_link, source_attribution)
