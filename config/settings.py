@@ -160,7 +160,7 @@ ENABLE_DAILY_REPORTS = True
 # VALIDATION
 # ============================================================================
 
-def validate_settings():
+def validate():
     """Validate that all required settings are configured"""
     required_settings = [
         ("FACEBOOK_PAGE_ACCESS_TOKEN", FACEBOOK_PAGE_ACCESS_TOKEN),
