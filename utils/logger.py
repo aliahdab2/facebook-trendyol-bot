@@ -10,15 +10,8 @@ from pathlib import Path
 from config import settings
 
 def setup_logger(name: str = "FacebookTrendyolBot") -> logging.Logger:
-    """
-    Setup logger with console and file handlers
-    
-    Args:
-        name: Logger name
-        
-    Returns:
-        Configured logger
-    """
+    """Setup logging - both to console (with colors) and file"""
+    # Using colorlog for nice colored output in terminal
     
     # Create logger
     logger = logging.getLogger(name)
